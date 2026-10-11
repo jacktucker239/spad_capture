@@ -27,6 +27,7 @@ from typing import Optional
 
 import serial
 
+from spad_capture.errors import FirmwareError
 from spad_capture.ports import require_port as _require_port
 from spad_capture.sensors.st.config import END_BYTE, MAGIC, START_BYTE, ST_LINK_VID, Config
 
@@ -189,10 +190,8 @@ class VL53L8CHTransport:
                 last = line
                 if line.startswith(MAGIC.decode()) and "ID=" in line:
                     return self._parse_id_line(line)
-        raise HandshakeError(
-            f"Handshake failed. Expected '{MAGIC.decode()} VL53L8CH <ver> ID=<hex>', "
-            f"got: {last!r}"
-        )
+        answer = f"it answered {last!r}" if last else "no answer"
+        raise FirmwareError(f"The NUCLEO board has no SPAD firmware ({answer}).\n  Fix: run `spad st flash`.")
 
     @staticmethod
     def _parse_id_line(line: str) -> dict:

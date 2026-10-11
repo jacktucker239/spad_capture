@@ -5,10 +5,16 @@ Both backends flash through here; each supplies only its core, FQBN and sketch.
 
 from __future__ import annotations
 
+import ctypes
+import io
 import os
+import platform
 import shutil
 import subprocess
+import sys
+import tarfile
 import urllib.request
+import zipfile
 from pathlib import Path
 from typing import Optional
 
@@ -22,7 +28,20 @@ _CLI_CANDIDATES = [
     Path("/opt/homebrew/bin/arduino-cli"),   # Homebrew on Apple silicon
     Path("~/.local/bin/arduino-cli").expanduser(),
 ]
-_BOOTSTRAP_URL = "https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh"
+_EXE = "arduino-cli.exe" if os.name == "nt" else "arduino-cli"
+_RELEASE_URL = "https://downloads.arduino.cc/arduino-cli/arduino-cli_1.5.1_{}"     # pinned stable release
+# No console window means we run inside an app; Windows would open one for every tool.
+_WINDOWLESS = os.name == "nt" and not ctypes.windll.kernel32.GetConsoleWindow()
+
+
+def _tool(cmd: list[str], **kw) -> subprocess.CompletedProcess:
+    """Run arduino-cli. Inside a windowless app it stays hidden, its output in ours."""
+    if _WINDOWLESS:
+        kw["creationflags"] = subprocess.CREATE_NO_WINDOW
+        if not kw.get("capture_output"):
+            kw.setdefault("stdout", sys.stdout)
+            kw.setdefault("stderr", sys.stderr)
+    return subprocess.run(cmd, **kw)
 
 
 def _bootstrap_dir() -> Path:
@@ -35,7 +54,7 @@ def _bootstrap_dir() -> Path:
 def _version(binary: Path) -> Optional[str]:
     """First line of ``arduino-cli version``, or None if it cannot be executed."""
     try:
-        p = subprocess.run([str(binary), "version"], capture_output=True, text=True, timeout=10)
+        p = _tool([str(binary), "version"], capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
         return None
     if p.returncode != 0:
@@ -52,23 +71,31 @@ def find_cli(override: Optional[Path] = None) -> Optional[Path]:
     on_path = shutil.which("arduino-cli")
     if on_path:
         return Path(on_path)
-    return next((c for c in _CLI_CANDIDATES if c.exists()), None)
+    return next((c for c in [*_CLI_CANDIDATES, _bootstrap_dir() / _EXE] if c.exists()), None)
+
+
+def _release() -> str:
+    """The official arduino-cli archive name for this machine."""
+    system = {"Darwin": "macOS", "Linux": "Linux", "Windows": "Windows"}[platform.system()]
+    arm = platform.machine().lower() in ("arm64", "aarch64") and system != "Windows"
+    return f"{system}_{'ARM64' if arm else '64bit'}.{'zip' if system == 'Windows' else 'tar.gz'}"
+
+
+def _unpack(archive: bytes, zipped: bool) -> bytes:
+    """The arduino-cli binary out of a release archive."""
+    if zipped:
+        return zipfile.ZipFile(io.BytesIO(archive)).read(_EXE)
+    with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+        return tar.extractfile(_EXE).read()
 
 
 def bootstrap_cli() -> Path:
-    """Install arduino-cli into the active environment.
+    """Download the official arduino-cli release into the active environment.
 
-    Reuses an existing binary if it runs. Linux and macOS only; on Windows
-    install arduino-cli manually and pass ``--arduino-cli <path>``.
+    Reuses an existing binary if it runs.
     """
-    if shutil.which("sh") is None:
-        raise RuntimeError(
-            "arduino-cli auto-install requires a POSIX shell (sh). Install it from "
-            "https://arduino.github.io/arduino-cli/latest/installation/ "
-            "and pass --arduino-cli <path>."
-        )
     target = _bootstrap_dir()
-    binary = target / "arduino-cli"
+    binary = target / _EXE
     if binary.exists():
         v = _version(binary)
         if v:
@@ -78,17 +105,13 @@ def bootstrap_cli() -> Path:
 
     target.mkdir(parents=True, exist_ok=True)
     _console.print(f"Installing arduino-cli into [cyan]{target}[/cyan] ...")
+    release = _release()
     try:
-        with urllib.request.urlopen(_BOOTSTRAP_URL, timeout=30) as r:
-            script = r.read()
+        with urllib.request.urlopen(_RELEASE_URL.format(release), timeout=60) as r:
+            binary.write_bytes(_unpack(r.read(), release.endswith(".zip")))
     except Exception as e:
-        raise RuntimeError(f"Could not download arduino-cli installer: {e}")
-
-    env = {**os.environ, "BINDIR": str(target)}
-    proc = subprocess.run(["sh"], input=script, env=env, capture_output=True, check=False)
-    if proc.returncode != 0 or not binary.exists():
-        detail = (proc.stdout + proc.stderr).decode("utf-8", errors="replace").strip()
-        raise RuntimeError("arduino-cli installer failed." + (f"\n{detail}" if detail else ""))
+        raise RuntimeError(f"Could not download arduino-cli: {e}")
+    binary.chmod(0o755)
     v = _version(binary)
     if v is None:
         raise RuntimeError(f"arduino-cli installed at {binary} but does not run.")
@@ -106,17 +129,32 @@ def ensure_core(cli: Path, core: str, *, index_url: Optional[str] = None) -> Non
 
     ``index_url`` adds a third-party board-manager index first (stm32duino).
     """
-    out = subprocess.run([str(cli), "core", "list"], capture_output=True, text=True)
+    out = _tool([str(cli), "core", "list"], capture_output=True, text=True)
     if core in out.stdout:
         return
     if index_url:
-        subprocess.run([str(cli), "config", "init"], capture_output=True, check=False)
-        subprocess.run([str(cli), "config", "add", "board_manager.additional_urls", index_url],
+        _tool([str(cli), "config", "init"], capture_output=True, check=False)
+        _tool([str(cli), "config", "add", "board_manager.additional_urls", index_url],
                        capture_output=True, check=False)
     _console.print(f"Installing {core} core ...")
-    subprocess.run([str(cli), "core", "update-index"], check=True, capture_output=True)
-    subprocess.run([str(cli), "core", "install", core], check=True, capture_output=True)
+    try:
+        _tool([str(cli), "core", "update-index"], check=True, capture_output=True)
+        _tool([str(cli), "core", "install", core], check=True, capture_output=True)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"Could not install the {core} core: {e.stderr.decode(errors='replace').strip()}") from None
     _console.print(f"[green]{core} core installed[/green]")
+
+
+def build(cli: Path, sketch: Path, *, fqbn: str, out: Path, verbose: bool = False) -> Path:
+    """Compile a sketch into ``out``; returns the firmware binary."""
+    if not sketch.exists():
+        raise FileNotFoundError(f"Bundled firmware missing: {sketch}")
+    cmd = [str(cli), "compile", "--fqbn", fqbn, "--output-dir", str(out), str(sketch)]
+    if verbose:
+        cmd.insert(1, "-v")
+    if _tool(cmd).returncode != 0:
+        raise RuntimeError("arduino-cli compile failed")
+    return next(out.glob("*.bin"))
 
 
 def upload(cli: Path, sketch: Path, *, fqbn: str, port: str, verbose: bool = False) -> None:
@@ -127,6 +165,6 @@ def upload(cli: Path, sketch: Path, *, fqbn: str, port: str, verbose: bool = Fal
     cmd = [str(cli), "compile", "--upload", "--port", port, "--fqbn", fqbn, str(sketch)]
     if verbose:
         cmd.insert(1, "-v")
-    if subprocess.run(cmd).returncode != 0:
+    if _tool(cmd).returncode != 0:
         raise RuntimeError("arduino-cli flash failed")
     _console.print("[bold green]Flash complete.[/bold green]")

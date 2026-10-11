@@ -23,6 +23,7 @@ import serial
 
 from spad_capture.ports import require_port
 from spad_capture.config import FirmwareConfig, RangeMode, SensorConfig, ZoneMode
+from spad_capture.errors import FirmwareError
 from spad_capture.frame import Frame
 
 # Per-map output geometry + sub-capture count.
@@ -244,7 +245,11 @@ class TMF8828Sensor:
 
         # Configure the firmware synchronously (no reader thread yet so the
         # handshake reads are blocking and won't lose data to a queue).
-        self._configure()
+        try:
+            self._configure()
+        except BaseException:
+            self._serial.close()
+            raise
 
         # Reader thread takes over after configure; it pushes histogram packets
         # into a queue that capture() pulls from.
@@ -443,6 +448,8 @@ class TMF8828Sensor:
             applied_buf.append(self._send_and_wait(cmd, **kw))
 
         _track("h")
+        if "#Conf line" not in applied_buf[0]:     # only our sketch's help lists its #Conf command
+            raise FirmwareError("The Arduino has no SPAD firmware.\n  Fix: run `spad tmf flash`.")
         _track("d")
 
         if self.config.zone_mode == ZoneMode.GRID_8x8:
@@ -577,7 +584,7 @@ class TMF8828Sensor:
             except queue.Empty:
                 continue
             if item is _OUTDATED:
-                raise RuntimeError("The Arduino runs older firmware. Run `spad tmf flash`.")
+                raise FirmwareError("The Arduino runs older SPAD firmware.\n  Fix: run `spad tmf flash`.")
             if item is _UNPLUGGED:
                 raise RuntimeError("The Arduino was disconnected.")
             idx, data = item

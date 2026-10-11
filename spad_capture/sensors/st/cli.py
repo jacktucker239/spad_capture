@@ -8,7 +8,7 @@ from typing import Optional
 
 import click
 
-from spad_capture.errors import clean as _clean
+from spad_capture.errors import FirmwareError, clean as _clean
 from spad_capture.sensors.st.config import Config, Mode, load_config
 
 _MODE_CHOICES = [m.value for m in Mode]
@@ -139,8 +139,8 @@ def detect_cmd(port: Optional[str]) -> None:
     try:
         with VL53L8CHTransport(cfg) as t:
             info = t.handshake()
-    except (PortNotFoundError, HandshakeError) as e:
-        raise click.ClickException(str(e)) from None
+    except (PortNotFoundError, HandshakeError, FirmwareError) as e:
+        raise _clean(e) from None
     dev_id = info.get("device_id")
     ver = (
         f"{info.get('fw_major', '?')}.{info.get('fw_minor', '?')}"
