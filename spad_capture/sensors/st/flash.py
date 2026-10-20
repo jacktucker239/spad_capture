@@ -1,8 +1,16 @@
-"""Compile the bundled VL53L8CH sketch and program the NUCLEO board through its ST-LINK drive."""
+"""Program the NUCLEO board with the VL53L8CH firmware through its ST-LINK drive.
+
+The firmware ships prebuilt (``firmware/vl53l8ch_cnh.bin``), so flashing is a file copy: no
+arduino-cli, no STM32 core, nothing downloaded. Only a changed sketch is compiled, with arduino-cli.
+
+    python -m spad_capture.sensors.st.flash      rebuild the bundled binary after changing the sketch
+"""
 
 from __future__ import annotations
 
+import json
 import os
+import shutil
 import string
 import tempfile
 import time
@@ -13,7 +21,7 @@ from rich.console import Console
 
 from spad_capture import arduino
 from spad_capture.sensors.st.config import Config, SensorConfig
-from spad_capture.sensors.st.firmware import sketch_path
+from spad_capture.sensors.st.firmware import BINARY, MANIFEST, prebuilt, sketch_path, sources_digest
 from spad_capture.sensors.st.transport import VL53L8CHTransport, require_port
 
 _FQBN = "STMicroelectronics:stm32:Nucleo_64:pnum=NUCLEO_F401RE"
@@ -25,7 +33,7 @@ _console = Console()
 
 def flash(port: Optional[str] = None, *, arduino_cli: Optional[Path] = None,
           verbose: bool = False) -> None:
-    """Compile the bundled VL53L8CH sketch and program the NUCLEO-F401RE with it.
+    """Program the NUCLEO-F401RE with the VL53L8CH firmware.
 
     The ST-LINK programs whatever firmware is copied onto its USB drive. The
     core's own upload script copies with a tool some ST-LINK versions misread,
@@ -33,13 +41,31 @@ def flash(port: Optional[str] = None, *, arduino_cli: Optional[Path] = None,
     """
     require_port(port)     # the board is attached
     drive = _st_link_drive()
-    cli = arduino.ensure_cli(arduino_cli)
-    arduino.ensure_core(cli, _CORE, index_url=_INDEX)
-    _console.print(f"[bold]Flashing[/bold] [cyan]{sketch_path().name}[/cyan] on [cyan]{drive}[/cyan]")
     with tempfile.TemporaryDirectory() as out:
-        _program(arduino.build(cli, sketch_path(), fqbn=_FQBN, out=Path(out), verbose=verbose), drive)
+        firmware = prebuilt() or _compile(Path(out), arduino_cli, verbose)
+        _console.print(f"[bold]Writing[/bold] [cyan]{firmware.name}[/cyan] to the ST-LINK drive [cyan]{drive}[/cyan]")
+        _program(firmware, drive)
     _wait_until_running(port)
     _console.print("[bold green]Flash complete.[/bold green]")
+
+
+def _compile(out: Path, arduino_cli: Optional[Path], verbose: bool) -> Path:
+    """Compile the sketch with arduino-cli and the STM32 core, installing them if needed."""
+    cli = arduino.ensure_cli(arduino_cli)
+    arduino.ensure_core(cli, _CORE, index_url=_INDEX)
+    _console.print(f"[bold]Flashing[/bold]: building [cyan]{sketch_path().name}[/cyan] ({_FQBN})")
+    return arduino.build(cli, sketch_path(), fqbn=_FQBN, out=out, verbose=verbose)
+
+
+def prebuild(arduino_cli: Optional[Path] = None) -> Path:
+    """Rebuild the bundled binary and its manifest from the sketch as it is now."""
+    with tempfile.TemporaryDirectory() as out:
+        shutil.copyfile(_compile(Path(out), arduino_cli, False), BINARY)
+    cli = arduino.ensure_cli(arduino_cli)
+    MANIFEST.write_text(json.dumps({"sources_sha256": sources_digest(), "fqbn": _FQBN,
+                                    "core": f"{_CORE} {arduino.core_version(cli, _CORE)}",
+                                    "arduino_cli": arduino.version(cli)}, indent=1) + "\n")
+    return BINARY
 
 
 def _st_link_drive() -> Path:
@@ -85,3 +111,7 @@ def _wait_until_running(port: Optional[str], timeout_s: float = 30.0) -> None:
             time.sleep(1)
     raise RuntimeError("The NUCLEO board did not start its new firmware.\n"
                        "  Fix: unplug the board and plug it back in.")
+
+
+if __name__ == "__main__":
+    print(prebuild())

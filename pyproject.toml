@@ -21,6 +21,7 @@ dependencies = [
   "uvicorn[standard]>=0.27",
   "h5py>=3.10",
   "rich>=13.0",
+  "certifi",
   "opencv-python-headless>=4.9",   # for viz JPEG encoding of RGB + depth
 ]
 
@@ -39,6 +40,7 @@ include = ["spad_capture*"]
 
 [tool.setuptools.package-data]
 "spad_capture.sensors.tmf.firmware" = ["tmf8828/*"]
+"spad_capture.sensors.st.firmware"  = ["vl53l8ch_cnh/*", "vl53l8ch_cnh.bin", "vl53l8ch_cnh.json"]
 "spad_capture.viz"      = ["static/*"]
 
 [tool.ruff]

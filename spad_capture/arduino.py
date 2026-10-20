@@ -10,14 +10,17 @@ import io
 import os
 import platform
 import shutil
+import ssl
 import subprocess
 import sys
 import tarfile
+import tempfile
 import urllib.request
 import zipfile
 from pathlib import Path
 from typing import Optional
 
+import certifi
 from rich.console import Console
 
 _console = Console()
@@ -36,6 +39,7 @@ _WINDOWLESS = os.name == "nt" and not ctypes.windll.kernel32.GetConsoleWindow()
 
 def _tool(cmd: list[str], **kw) -> subprocess.CompletedProcess:
     """Run arduino-cli. Inside a windowless app it stays hidden, its output in ours."""
+    kw.setdefault("env", {"TMPDIR": tempfile.gettempdir(), **os.environ})     # its ctags step needs a TMPDIR
     if _WINDOWLESS:
         kw["creationflags"] = subprocess.CREATE_NO_WINDOW
         if not kw.get("capture_output"):
@@ -51,7 +55,7 @@ def _bootstrap_dir() -> Path:
     return Path(prefix) / "bin" if prefix else Path("~/.local/bin").expanduser()
 
 
-def _version(binary: Path) -> Optional[str]:
+def version(binary: Path) -> Optional[str]:
     """First line of ``arduino-cli version``, or None if it cannot be executed."""
     try:
         p = _tool([str(binary), "version"], capture_output=True, text=True, timeout=10)
@@ -97,7 +101,7 @@ def bootstrap_cli() -> Path:
     target = _bootstrap_dir()
     binary = target / _EXE
     if binary.exists():
-        v = _version(binary)
+        v = version(binary)
         if v:
             _console.print(f"[dim]arduino-cli already installed: {v}[/dim]")
             return binary
@@ -107,12 +111,13 @@ def bootstrap_cli() -> Path:
     _console.print(f"Installing arduino-cli into [cyan]{target}[/cyan] ...")
     release = _release()
     try:
-        with urllib.request.urlopen(_RELEASE_URL.format(release), timeout=60) as r:
+        tls = ssl.create_default_context(cafile=certifi.where())     # a packaged app has no system CA bundle
+        with urllib.request.urlopen(_RELEASE_URL.format(release), timeout=60, context=tls) as r:
             binary.write_bytes(_unpack(r.read(), release.endswith(".zip")))
     except Exception as e:
-        raise RuntimeError(f"Could not download arduino-cli: {e}")
+        raise RuntimeError(f"Could not download arduino-cli: {e}\n  Fix: check the internet connection, then try again.")
     binary.chmod(0o755)
-    v = _version(binary)
+    v = version(binary)
     if v is None:
         raise RuntimeError(f"arduino-cli installed at {binary} but does not run.")
     _console.print(f"[green]Installed[/green] {v}")
@@ -124,13 +129,21 @@ def ensure_cli(override: Optional[Path] = None) -> Path:
     return find_cli(override) or bootstrap_cli()
 
 
+def core_version(cli: Path, core: str) -> Optional[str]:
+    """The installed version of a board core, or None if it is not installed."""
+    for line in _tool([str(cli), "core", "list"], capture_output=True, text=True).stdout.splitlines():
+        fields = line.split()
+        if len(fields) > 1 and fields[0] == core:
+            return fields[1]
+    return None
+
+
 def ensure_core(cli: Path, core: str, *, index_url: Optional[str] = None) -> None:
     """Install a board core if it is not already registered.
 
     ``index_url`` adds a third-party board-manager index first (stm32duino).
     """
-    out = _tool([str(cli), "core", "list"], capture_output=True, text=True)
-    if core in out.stdout:
+    if core_version(cli, core):
         return
     if index_url:
         _tool([str(cli), "config", "init"], capture_output=True, check=False)

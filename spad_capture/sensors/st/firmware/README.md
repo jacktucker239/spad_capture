@@ -39,6 +39,12 @@ sensor — `SPI_I2C_N`=PC13 low (selects I2C), `PWR_EN`=PA7 and `LPn`=PB0 high,
 
 ## Software prerequisites
 
+`spad st flash` needs none of this. The sketch ships prebuilt as `../vl53l8ch_cnh.bin` and is
+copied onto the ST-LINK drive. The tools below are needed only to change the sketch. After any
+change, rebuild the bundled binary with `python -m spad_capture.sensors.st.flash`. Until you do,
+`spad st flash` compiles the changed sketch itself, because `vl53l8ch_cnh.json` records which
+sources the binary was built from.
+
 ### 1. stm32duino core
 
 Add the board index and install the STM32 core:
