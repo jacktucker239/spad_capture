@@ -1,0 +1,26 @@
+# Live VL53L8CH demo: raw histograms and a filtered, upsampled depth map.
+# Runs for up to one hour, saves nothing, and stops cleanly with Ctrl-C.
+
+backend: st
+
+name: "8x8-depth-demo"
+
+sensor:
+  mode: "8x8"
+  start_mm: 0.0
+  end_mm: 1332.0
+  bin_mm: 74.0
+  ranging_frequency_hz: 10
+
+capture:
+  mode: "stream"
+  duration_s: 3600
+
+storage:
+  format: "none"
+
+viz:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8888
+  update_hz: 15.0

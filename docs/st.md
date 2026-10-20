@@ -160,6 +160,19 @@ frames[0]["ambient"]       # (H, W) float32
 meta["sensor_layout"]["bin_centers_mm"]   # physical x-axis, one per bin
 ```
 
+## Live interactive effects
+
+With `--viz`, ST captures open in the filtered `depth map`; raw `histograms`
+are available from the view selector. For every zone, the dashboard finds the
+maximum-magnitude bin and estimates a sub-bin peak. The
+default `suppress weak` pass requires
+the peak prominence to clear both `min signal` (10 by default; an empty scene
+on the tested sensor was around 3) and three times the zone's robust noise
+estimate.
+
+Enable `smooth 64×64` for mask-aware bilinear interpolation of the filtered
+8×8 depth field.
+
 ## CLI
 
 | Config field | Flag |

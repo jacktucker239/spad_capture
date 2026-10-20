@@ -57,6 +57,16 @@ Add `--viz` for the live dashboard at `http://127.0.0.1:8888`, and
 `spad camera check` diagnoses the camera. Realsense capture on macOS needs `sudo`:
 [docs/docs.md](docs/docs.md#realsense-on-macos).
 
+For the ST sensor, the dashboard offers the raw histograms and a filtered depth
+map. Weak returns are suppressed using peak prominence above each zone's
+histogram baseline; adjust `min signal` for the scene and enable `smooth 64×64`
+for bilinear upsampling.
+
+```bash
+# one-hour, no-save demo (Ctrl-C to stop)
+spad st capture -c configs/st/8x8_depth_demo.yaml
+```
+
 ## Key parameters
 
 The main fields tuned per capture, as YAML and as CLI flags. Full schema:

@@ -30,7 +30,18 @@
     .controls input:focus { outline: 1px solid var(--accent); }
     main { padding: 18px; display: grid; gap: 16px; grid-template-columns: 1fr;
             align-items: center; }
+    .hidden-view { display: none !important; }
     body.waiting #grid::before {
+      content: "waiting for frames…";
+      display: block;
+      color: var(--muted);
+      padding: 60px 0;
+      text-align: center;
+      font-size: 12px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    body.waiting #depthmap-panel::before {
       content: "waiting for frames…";
       display: block;
       color: var(--muted);
@@ -57,6 +68,29 @@
     #grid.rows-1 .cell canvas { height: 220px; }
     #grid.rows-2 .cell canvas { height: 140px; }
     #grid.rows-3 .cell canvas { height: 92px; }
+    #depthmap-panel { width: 100%; min-width: 0; }
+    #depthmap-card {
+      width: min(100%, 820px); margin: 0 auto; background: var(--cell-bg);
+      border: 1px solid var(--grid); border-radius: 8px; padding: 12px;
+    }
+    body.waiting #depthmap-card { display: none; }
+    .depthmap-heading {
+      margin-bottom: 9px; display: flex; justify-content: space-between;
+      color: var(--muted); font-size: 11px; letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    #depthmap-canvas {
+      display: block; width: 100%; aspect-ratio: 1 / 1;
+      border-radius: 4px; background: #080b10;
+    }
+    .depthmap-legend {
+      display: grid; grid-template-columns: auto 1fr auto; align-items: center;
+      gap: 9px; margin-top: 9px; color: var(--muted); font-size: 10px;
+    }
+    .depthmap-gradient {
+      height: 9px; border-radius: 999px; border: 1px solid var(--grid);
+      background: linear-gradient(90deg, #7a0403, #f96f18, #90dc32, #1fc98b, #2493c9, #4612c3, #30123b);
+    }
     #side { display: none; flex-direction: column; gap: 12px; }
     .pane { background: var(--cell-bg); border: 1px solid var(--grid); border-radius: 6px; padding: 10px; }
     .pane.hidden { display: none; }
@@ -170,10 +204,18 @@
   <header>
     <h1>spad_capture</h1>
     <div class="controls">
-      <label title="cap the histogram y-axis (leave blank for auto-scale)">y-max <input id="ymax" type="number" placeholder="auto" min="1" /></label>
-      <label title="lowest time-bin to display">bin from <input id="binmin" type="number" placeholder="0" min="0" /></label>
-      <label title="highest time-bin to display">to <input id="binmax" type="number" min="0" /></label>
-      <label title="plot counts on a log scale"><input id="logy" type="checkbox" /> log-y</label>
+      <label title="choose the primary SPAD visualization">view
+        <select id="view-mode"><option value="depth">depth map</option><option value="histogram">histograms</option></select>
+      </label>
+      <label class="depth-control" title="nearest depth represented by the color scale">near mm <input id="depthmin" type="number" min="0" /></label>
+      <label class="depth-control" title="farthest depth represented by the color scale">far mm <input id="depthmax" type="number" min="1" /></label>
+      <label class="depth-control" title="hide zones whose modal peak is too weak to be a reliable return"><input id="suppress-low" type="checkbox" checked /> suppress weak</label>
+      <label class="depth-control" title="minimum modal-peak prominence above baseline; the empty-scene sensor is typically around 3"><span>min signal</span><input id="signal-floor" type="number" value="10" min="0" step="1" /></label>
+      <label class="depth-control" title="bilinearly interpolate the active field to 64×64"><input id="upsample" type="checkbox" checked /> smooth 64×64</label>
+      <label class="hist-control" title="cap the histogram y-axis (leave blank for auto-scale)">y-max <input id="ymax" type="number" placeholder="auto" min="1" /></label>
+      <label class="hist-control" title="lowest time-bin to display">bin from <input id="binmin" type="number" placeholder="0" min="0" /></label>
+      <label class="hist-control" title="highest time-bin to display">to <input id="binmax" type="number" min="0" /></label>
+      <label class="hist-control" title="plot counts on a log scale"><input id="logy" type="checkbox" /> log-y</label>
       <button class="toggle" id="t-rgb" hidden title="show/hide rgb camera pane">rgb</button>
       <button class="toggle" id="t-depth" hidden title="show/hide depth pane">depth</button>
       <button class="toggle" id="t-ir" hidden title="show/hide ir-left pane">ir-L</button>
@@ -193,7 +235,16 @@
     </div>
   </div>
   <main id="main">
-    <div id="grid"></div>
+    <div id="depthmap-panel">
+      <div id="depthmap-card">
+        <div class="depthmap-heading"><span id="depthmap-title">depth map</span><span id="depthmap-summary">—</span></div>
+        <canvas id="depthmap-canvas"></canvas>
+        <div class="depthmap-legend" id="depthmap-legend">
+          <span id="depth-near">—</span><div class="depthmap-gradient"></div><span id="depth-far">—</span>
+        </div>
+      </div>
+    </div>
+    <div id="grid" class="hidden-view"></div>
     <div id="side">
       <div class="pane" id="pane-rgb">
         <h3>rgb camera</h3>
@@ -226,8 +277,9 @@
     <div id="status">connecting…</div>
     <div id="meta"></div>
     <div>frame <span id="frame_idx">—</span></div>
-    <div title="highest single-bin count across displayed zones">peak count <span id="peak">—</span></div>
-    <div title="sum of all bins across displayed zones (filtered to selected bin range)">total counts <span id="sum">—</span></div>
+    <div class="hist-metric" title="highest single-bin count across displayed zones">peak count <span id="peak">—</span></div>
+    <div class="hist-metric" title="sum of all bins across displayed zones (filtered to selected bin range)">total counts <span id="sum">—</span></div>
+    <div class="depth-metric" title="current effect status">effect <span id="depth-stats">—</span></div>
     <div title="frames per second (rolling average)">fps <span id="fps">—</span></div>
     <div title="wall-clock time of the most recent frame">last update <span id="last">—</span></div>
   </div>
@@ -237,6 +289,9 @@
   const $ = (id) => document.getElementById(id);
   const grid = $('grid');
   const mainEl = $('main');
+  const depthmapPanel = $('depthmap-panel');
+  const depthmapCanvas = $('depthmap-canvas');
+  const depthmapCtx = depthmapCanvas.getContext('2d');
   const rgbImg = $('rgb-img');
   const depthImg = $('depth-img');
   const replayBar = $('replay-bar');
@@ -263,6 +318,22 @@
   let lastIrUrl = null, lastIrRightUrl = null;
   let hasDepthStream = false;
   let showRgb = true, showDepth = true, showIr = true, showIrRight = true;
+  let displayH = 0, displayW = 0;
+  let viewConfiguredForSensor = false;
+  let depthHistory = [], depthHistoryKey = '', depthHistorySettings = '';
+
+  function applyViewMode() {
+    const mode = $('view-mode').value;
+    const histogram = mode === 'histogram';
+    depthmapPanel.classList.toggle('hidden-view', histogram);
+    grid.classList.toggle('hidden-view', !histogram);
+    document.querySelectorAll('.depth-control,.depth-metric').forEach(el => el.classList.toggle('hidden-view', histogram));
+    document.querySelectorAll('.hist-control,.hist-metric').forEach(el => el.classList.toggle('hidden-view', !histogram));
+    document.querySelector('.depthmap-gradient').style.background =
+      'linear-gradient(90deg, #7a0403, #f96f18, #90dc32, #1fc98b, #2493c9, #4612c3, #30123b)';
+    if (lastFrame) render(lastFrame);
+  }
+  $('view-mode').addEventListener('change', applyViewMode);
 
   $('t-rgb').addEventListener('click', () => { showRgb = !showRgb; updatePanes(); });
   $('t-depth').addEventListener('click', () => { showDepth = !showDepth; updatePanes(); });
@@ -286,9 +357,10 @@
     t === systemTheme() ? localStorage.removeItem('theme-choice') : localStorage.setItem('theme-choice', t);
     setTheme(t);
   });
-  ['ymax','binmin','binmax','logy'].forEach(id => {
+  ['ymax','binmin','binmax','logy','depthmin','depthmax','suppress-low','signal-floor','upsample'].forEach(id => {
     $(id).addEventListener('input', () => { if (lastFrame) render(lastFrame); });
   });
+  applyViewMode();
 
   function updatePanes() {
     const r = hasRgbStream && showRgb;
@@ -357,6 +429,8 @@
       }
     }
 
+    displayH = render_h; displayW = render_w;
+    depthmapCanvas.style.aspectRatio = `${render_w} / ${render_h}`;
     grid.style.gridTemplateColumns = `repeat(${render_w}, minmax(0, 1fr))`;
     if (render_h <= 3) grid.classList.add(`rows-${render_h}`);
 
@@ -428,6 +502,199 @@
     }
   }
 
+  const DEPTH_COLORS = [
+    [0.00, [48, 18, 59]], [0.13, [70, 18, 195]], [0.25, [36, 147, 201]],
+    [0.38, [31, 201, 139]], [0.50, [144, 220, 50]], [0.63, [238, 185, 38]],
+    [0.75, [249, 111, 24]], [0.88, [203, 42, 40]], [1.00, [122, 4, 3]],
+  ];
+
+  // Near depths are warm and far depths are cool. The reversal happens here
+  // so the underlying color stops remain ordered like the familiar Turbo map.
+  function depthColor(t) {
+    const x = 1 - Math.max(0, Math.min(1, t));
+    let j = 1;
+    while (j < DEPTH_COLORS.length && x > DEPTH_COLORS[j][0]) j++;
+    const [x0, c0] = DEPTH_COLORS[j - 1];
+    const [x1, c1] = DEPTH_COLORS[Math.min(j, DEPTH_COLORS.length - 1)];
+    const a = x1 === x0 ? 0 : (x - x0) / (x1 - x0);
+    return c0.map((v, k) => Math.round(v + a * (c1[k] - v)));
+  }
+
+  function binCenterMm(bin, b) {
+    const m = cachedMeta || {};
+    if (Array.isArray(m.bin_centers_mm) && Number.isFinite(m.bin_centers_mm[bin])) {
+      return Number(m.bin_centers_mm[bin]);
+    }
+    const start = Number.isFinite(m.start_mm) ? Number(m.start_mm) : 0;
+    if (Number.isFinite(m.effective_bin_mm)) return start + (bin + 0.5) * Number(m.effective_bin_mm);
+    if (Number.isFinite(m.end_mm) && b > 0) return start + (bin + 0.5) * (Number(m.end_mm) - start) / b;
+    return bin;
+  }
+
+  function binPositionMm(position, b) {
+    const m = cachedMeta || {};
+    const start = Number.isFinite(m.start_mm) ? Number(m.start_mm) : 0;
+    if (Number.isFinite(m.effective_bin_mm)) {
+      return start + (position + 0.5) * Number(m.effective_bin_mm);
+    }
+    if (Number.isFinite(m.end_mm) && b > 0) {
+      return start + (position + 0.5) * (Number(m.end_mm) - start) / b;
+    }
+    return binCenterMm(Math.round(position), b);
+  }
+
+  function configuredDepthRange(b) {
+    const m = cachedMeta || {};
+    const autoNear = Number.isFinite(m.start_mm) ? Number(m.start_mm) : binCenterMm(0, b);
+    const autoFar = Number.isFinite(m.end_mm) ? Number(m.end_mm) : binCenterMm(Math.max(0, b - 1), b);
+    const typedNear = parseFloat($('depthmin').value);
+    const typedFar = parseFloat($('depthmax').value);
+    const near = Number.isFinite(typedNear) ? typedNear : autoNear;
+    const far = Number.isFinite(typedFar) && typedFar > near ? typedFar : Math.max(near + 1, autoFar);
+    return [near, far];
+  }
+
+  function median(values) {
+    if (!values.length) return NaN;
+    const a = [...values].sort((x, y) => x - y);
+    const mid = Math.floor(a.length / 2);
+    return a.length % 2 ? a[mid] : (a[mid - 1] + a[mid]) / 2;
+  }
+
+  function modalDepths(frame) {
+    const { index, ts, b, hist } = frame;
+    const suppress = $('suppress-low').checked;
+    const enteredFloor = parseFloat($('signal-floor').value);
+    const signalFloor = Number.isFinite(enteredFloor) ? Math.max(0, enteredFloor) : 10;
+    const settings = `${suppress}:${signalFloor}`;
+    if (settings !== depthHistorySettings) {
+      depthHistory = []; depthHistoryKey = ''; depthHistorySettings = settings;
+    }
+    const key = `${index}:${ts}`;
+    if (key !== depthHistoryKey) {
+      const raw = new Array(cellOutputIdx.length).fill(NaN);
+      for (let ci = 0; ci < cellOutputIdx.length; ci++) {
+        const off = cellOutputIdx[ci] * b;
+        const values = [];
+        let modeBin = 0, modeValue = -Infinity;
+        for (let i = 0; i < b; i++) {
+          const v = hist[off + i];
+          if (!Number.isFinite(v)) continue;
+          values.push(v);
+          if (v > modeValue) { modeValue = v; modeBin = i; }
+        }
+        const baseline = median(values);
+        const noise = 1.4826 * median(values.map(v => Math.abs(v - baseline)));
+        const prominence = modeValue - baseline;
+        // CNH magnitudes in an empty scene are typically around 3 on this
+        // device. Require both a user-adjustable absolute prominence and a
+        // 3-sigma separation from the per-zone histogram floor.
+        const reliable = modeValue > 0 && (!suppress || (
+          prominence >= signalFloor && prominence >= 3 * Math.max(noise, 0.25)
+        ));
+        if (reliable) {
+          let subBin = modeBin;
+          if (modeBin > 0 && modeBin < b - 1) {
+            const left = hist[off + modeBin - 1], center = hist[off + modeBin];
+            const right = hist[off + modeBin + 1];
+            const denom = left - 2 * center + right;
+            if (Number.isFinite(denom) && Math.abs(denom) > 1e-6) {
+              subBin += Math.max(-0.5, Math.min(0.5, 0.5 * (left - right) / denom));
+            }
+          }
+          raw[ci] = binPositionMm(subBin, b);
+        }
+      }
+      depthHistory.push(raw);
+      if (depthHistory.length > 3) depthHistory.shift();
+      depthHistoryKey = key;
+    }
+    const current = depthHistory[depthHistory.length - 1] || [];
+    return current.map((v, i) => {
+      // Drop a weak return immediately; otherwise use a three-frame median to
+      // remove one-frame modal-bin jumps without leaving a ghost behind.
+      if (!Number.isFinite(v)) return NaN;
+      return median(depthHistory.map(d => d[i]).filter(Number.isFinite));
+    });
+  }
+
+  function bilinearUpsample(source, sourceH, sourceW, targetH, targetW) {
+    const out = new Array(targetH * targetW).fill(NaN);
+    for (let row = 0; row < targetH; row++) {
+      const sy = Math.max(0, Math.min(sourceH - 1, (row + 0.5) * sourceH / targetH - 0.5));
+      const y0 = Math.floor(sy), y1 = Math.min(sourceH - 1, y0 + 1), fy = sy - y0;
+      for (let col = 0; col < targetW; col++) {
+        const sx = Math.max(0, Math.min(sourceW - 1, (col + 0.5) * sourceW / targetW - 0.5));
+        const x0 = Math.floor(sx), x1 = Math.min(sourceW - 1, x0 + 1), fx = sx - x0;
+        const samples = [
+          [source[y0 * sourceW + x0], (1 - fx) * (1 - fy)],
+          [source[y0 * sourceW + x1], fx * (1 - fy)],
+          [source[y1 * sourceW + x0], (1 - fx) * fy],
+          [source[y1 * sourceW + x1], fx * fy],
+        ];
+        let weighted = 0, validWeight = 0;
+        for (const [value, weight] of samples) {
+          if (Number.isFinite(value)) { weighted += value * weight; validWeight += weight; }
+        }
+        if (validWeight >= 0.5) out[row * targetW + col] = weighted / validWeight;
+      }
+    }
+    return out;
+  }
+
+  function fitEffectCanvas() {
+    const rect = depthmapCanvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    const dpr = window.devicePixelRatio || 1;
+    const pxW = Math.max(1, Math.floor(rect.width * dpr));
+    const pxH = Math.max(1, Math.floor(rect.height * dpr));
+    if (depthmapCanvas.width !== pxW || depthmapCanvas.height !== pxH) {
+      depthmapCanvas.width = pxW; depthmapCanvas.height = pxH;
+    }
+    return { pxW, pxH, dpr };
+  }
+
+  function renderDepthMap(frame, sourceDepths) {
+    const size = fitEffectCanvas();
+    if (!size) return;
+    const { pxW, pxH, dpr } = size;
+    const [near, far] = configuredDepthRange(frame.b);
+    const smooth = $('upsample').checked;
+    const drawH = smooth ? displayH * 8 : displayH;
+    const drawW = smooth ? displayW * 8 : displayW;
+    const field = smooth
+      ? bilinearUpsample(sourceDepths, displayH, displayW, drawH, drawW)
+      : sourceDepths;
+    const cw = pxW / drawW, ch = pxH / drawH;
+    depthmapCtx.fillStyle = '#050913'; depthmapCtx.fillRect(0, 0, pxW, pxH);
+    for (let i = 0; i < field.length; i++) {
+      const depth = field[i], valid = Number.isFinite(depth);
+      const rgb = valid ? depthColor((depth - near) / (far - near)) : [35, 39, 47];
+      const row = Math.floor(i / drawW), col = i % drawW;
+      depthmapCtx.fillStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+      depthmapCtx.fillRect(col * cw, row * ch, Math.ceil(cw), Math.ceil(ch));
+      if (!smooth) {
+        depthmapCtx.strokeStyle = 'rgba(255,255,255,.18)';
+        depthmapCtx.lineWidth = Math.max(1, dpr);
+        depthmapCtx.strokeRect(col * cw, row * ch, cw, ch);
+      }
+    }
+    const validDepths = sourceDepths.filter(Number.isFinite);
+    $('depthmap-title').textContent = smooth ? `${drawH} × ${drawW} interpolated depth` : `${displayH} × ${displayW} modal-bin depth`;
+    $('depthmap-summary').textContent = `${validDepths.length}/${sourceDepths.length} valid source zones`;
+    $('depth-near').textContent = `${Math.round(near)} mm near`;
+    $('depth-far').textContent = `${Math.round(far)} mm far`;
+    $('depth-stats').textContent = validDepths.length
+      ? `${Math.round(Math.min(...validDepths))}–${Math.round(Math.max(...validDepths))} mm`
+      : '—';
+  }
+
+  function renderEffect(frame) {
+    if (!displayH || !displayW) return;
+    const sourceDepths = modalDepths(frame);
+    renderDepthMap(frame, sourceDepths);
+  }
+
   // Track which output_labels were used at the last buildGrid to detect
   // when to rebuild (e.g. labels arrived from /meta AFTER the first frame).
   let lastLabelsKey = '';
@@ -475,30 +742,31 @@
       cellPk[ci].textContent = fmtVal(pp);
       drawCell(cellCtx[ci], hist, off, lo, hi, logY, denom);
     }
+    if ($('view-mode').value !== 'histogram') renderEffect(frame);
     $('frame_idx').textContent = index;
     $('peak').textContent = fmtVal(peak);
     $('sum').textContent = fmtVal(total);
     $('last').textContent = new Date(ts * 1000).toLocaleTimeString();
 
-    if (rgbBlobUrl) {
+    if (rgbBlobUrl && rgbBlobUrl !== lastRgbUrl) {
       if (lastRgbUrl) URL.revokeObjectURL(lastRgbUrl);
       rgbImg.src = rgbBlobUrl;
       lastRgbUrl = rgbBlobUrl;
       if (!hasRgbStream) { hasRgbStream = true; updatePanes(); }
     }
-    if (depthBlobUrl) {
+    if (depthBlobUrl && depthBlobUrl !== lastDepthUrl) {
       if (lastDepthUrl) URL.revokeObjectURL(lastDepthUrl);
       depthImg.src = depthBlobUrl;
       lastDepthUrl = depthBlobUrl;
       if (!hasDepthStream) { hasDepthStream = true; updatePanes(); }
     }
-    if (irBlobUrl) {
+    if (irBlobUrl && irBlobUrl !== lastIrUrl) {
       if (lastIrUrl) URL.revokeObjectURL(lastIrUrl);
       $('ir-img').src = irBlobUrl;
       lastIrUrl = irBlobUrl;
       if (!hasIrStream) { hasIrStream = true; updatePanes(); }
     }
-    if (irRightBlobUrl) {
+    if (irRightBlobUrl && irRightBlobUrl !== lastIrRightUrl) {
       if (lastIrRightUrl) URL.revokeObjectURL(lastIrRightUrl);
       $('ir-right-img').src = irRightBlobUrl;
       lastIrRightUrl = irRightBlobUrl;
@@ -587,6 +855,14 @@
       const r = await fetch('/meta');
       const m = await r.json();
       cachedMeta = m;
+      const hasPhysicalDepth = Array.isArray(m.bin_centers_mm)
+        || Number.isFinite(m.effective_bin_mm);
+      $('view-mode').querySelector('option[value="depth"]').disabled = !hasPhysicalDepth;
+      if (!viewConfiguredForSensor) {
+        $('view-mode').value = hasPhysicalDepth ? 'depth' : 'histogram';
+        viewConfiguredForSensor = true;
+        applyViewMode();
+      }
       // TMF reports zone/range modes; ST reports a grid mode and a bin window.
       const tags = [];
       if (m.zone_mode) tags.push(`zone=${m.zone_mode}`);
@@ -595,6 +871,8 @@
       if (m.num_bins) tags.push(`${m.num_bins} bins`);
       if (Number.isFinite(m.start_mm) && Number.isFinite(m.end_mm)) {
         tags.push(`${Math.round(m.start_mm)}–${Math.round(m.end_mm)} mm`);
+        $('depthmin').placeholder = Math.round(m.start_mm);
+        $('depthmax').placeholder = Math.round(m.end_mm);
       }
       if (m.rgb_enabled) tags.push('rgb');
       if (m.depth_enabled) tags.push('depth');
@@ -622,6 +900,7 @@
       // server config has capture_mode == "manual".
       $('t-capture').hidden = !(m.mode_label === 'live' && m.capture_mode === 'manual');
       updatePanes();
+      if (lastFrame && hasPhysicalDepth && $('view-mode').value !== 'histogram') renderEffect(lastFrame);
     } catch (e) {}
   }
 
@@ -1048,6 +1327,7 @@
   refreshMeta();
   setInterval(refreshMeta, 1000);
   connect();
+  window.addEventListener('resize', () => { if (lastFrame) render(lastFrame); });
 })();
 </script>
 </body>
