@@ -207,8 +207,6 @@
       <label title="choose the primary SPAD visualization">view
         <select id="view-mode"><option value="depth">depth map</option><option value="histogram">histograms</option></select>
       </label>
-      <label class="depth-control" title="nearest depth represented by the color scale">near mm <input id="depthmin" type="number" min="0" /></label>
-      <label class="depth-control" title="farthest depth represented by the color scale">far mm <input id="depthmax" type="number" min="1" /></label>
       <label class="depth-control" title="hide zones whose modal peak is too weak to be a reliable return"><input id="suppress-low" type="checkbox" checked /> suppress weak</label>
       <label class="depth-control" title="minimum modal-peak prominence above baseline; the empty-scene sensor is typically around 3"><span>min signal</span><input id="signal-floor" type="number" value="10" min="0" step="1" /></label>
       <label class="depth-control" title="bilinearly interpolate the active field to 64×64"><input id="upsample" type="checkbox" checked /> smooth 64×64</label>
@@ -279,7 +277,7 @@
     <div>frame <span id="frame_idx">—</span></div>
     <div class="hist-metric" title="highest single-bin count across displayed zones">peak count <span id="peak">—</span></div>
     <div class="hist-metric" title="sum of all bins across displayed zones (filtered to selected bin range)">total counts <span id="sum">—</span></div>
-    <div class="depth-metric" title="current effect status">effect <span id="depth-stats">—</span></div>
+    <div class="depth-metric" title="minimum and maximum reliable depth in this frame">depth range <span id="depth-stats">—</span></div>
     <div title="frames per second (rolling average)">fps <span id="fps">—</span></div>
     <div title="wall-clock time of the most recent frame">last update <span id="last">—</span></div>
   </div>
@@ -357,7 +355,7 @@
     t === systemTheme() ? localStorage.removeItem('theme-choice') : localStorage.setItem('theme-choice', t);
     setTheme(t);
   });
-  ['ymax','binmin','binmax','logy','depthmin','depthmax','suppress-low','signal-floor','upsample'].forEach(id => {
+  ['ymax','binmin','binmax','logy','suppress-low','signal-floor','upsample'].forEach(id => {
     $(id).addEventListener('input', () => { if (lastFrame) render(lastFrame); });
   });
   applyViewMode();
@@ -543,15 +541,8 @@
     return binCenterMm(Math.round(position), b);
   }
 
-  function configuredDepthRange(b) {
-    const m = cachedMeta || {};
-    const autoNear = Number.isFinite(m.start_mm) ? Number(m.start_mm) : binCenterMm(0, b);
-    const autoFar = Number.isFinite(m.end_mm) ? Number(m.end_mm) : binCenterMm(Math.max(0, b - 1), b);
-    const typedNear = parseFloat($('depthmin').value);
-    const typedFar = parseFloat($('depthmax').value);
-    const near = Number.isFinite(typedNear) ? typedNear : autoNear;
-    const far = Number.isFinite(typedFar) && typedFar > near ? typedFar : Math.max(near + 1, autoFar);
-    return [near, far];
+  function configuredDepthRange() {
+    return [0, 1500];
   }
 
   function median(values) {
@@ -682,10 +673,10 @@
     const validDepths = sourceDepths.filter(Number.isFinite);
     $('depthmap-title').textContent = smooth ? `${drawH} × ${drawW} interpolated depth` : `${displayH} × ${displayW} modal-bin depth`;
     $('depthmap-summary').textContent = `${validDepths.length}/${sourceDepths.length} valid source zones`;
-    $('depth-near').textContent = `${Math.round(near)} mm near`;
-    $('depth-far').textContent = `${Math.round(far)} mm far`;
+    $('depth-near').textContent = '0 m';
+    $('depth-far').textContent = '1.5 m';
     $('depth-stats').textContent = validDepths.length
-      ? `${Math.round(Math.min(...validDepths))}–${Math.round(Math.max(...validDepths))} mm`
+      ? `${Math.round(Math.min(...validDepths) / 10)}–${Math.round(Math.max(...validDepths) / 10)} cm`
       : '—';
   }
 
@@ -871,8 +862,6 @@
       if (m.num_bins) tags.push(`${m.num_bins} bins`);
       if (Number.isFinite(m.start_mm) && Number.isFinite(m.end_mm)) {
         tags.push(`${Math.round(m.start_mm)}–${Math.round(m.end_mm)} mm`);
-        $('depthmin').placeholder = Math.round(m.start_mm);
-        $('depthmax').placeholder = Math.round(m.end_mm);
       }
       if (m.rgb_enabled) tags.push('rgb');
       if (m.depth_enabled) tags.push('depth');

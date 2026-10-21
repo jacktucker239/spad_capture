@@ -60,7 +60,8 @@ Add `--viz` for the live dashboard at `http://127.0.0.1:8888`, and
 For the ST sensor, the dashboard offers the raw histograms and a filtered depth
 map. Weak returns are suppressed using peak prominence above each zone's
 histogram baseline; adjust `min signal` for the scene and enable `smooth 64×64`
-for bilinear upsampling.
+for bilinear upsampling. The depth colors use a fixed 0–1.5 m scale, while the
+live depth-range readout is shown in centimeters.
 
 ```bash
 # one-hour, no-save demo (Ctrl-C to stop)

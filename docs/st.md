@@ -160,7 +160,7 @@ frames[0]["ambient"]       # (H, W) float32
 meta["sensor_layout"]["bin_centers_mm"]   # physical x-axis, one per bin
 ```
 
-## Live interactive effects
+## Live dashboard
 
 With `--viz`, ST captures open in the filtered `depth map`; raw `histograms`
 are available from the view selector. For every zone, the dashboard finds the
@@ -171,7 +171,8 @@ on the tested sensor was around 3) and three times the zone's robust noise
 estimate.
 
 Enable `smooth 64×64` for mask-aware bilinear interpolation of the filtered
-8×8 depth field.
+8×8 depth field. The color bar is fixed at 0–1.5 m for a simple, consistent
+demo display; the per-frame reliable depth range is reported in centimeters.
 
 ## CLI
 
